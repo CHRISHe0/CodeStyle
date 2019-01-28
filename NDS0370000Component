@@ -1,0 +1,175 @@
+package com.ruimin.ifb.inter.component.ebank;
+
+import java.util.List;
+
+import com.ruimin.ifb.agent.process.service.CommEbankDrftReqService;
+import com.ruimin.ifb.ecds.swt.process.call.bean.EcdsCallRetBean;
+import com.ruimin.ifb.ecds.swt.process.constants.ECDSTxnCode;
+import com.ruimin.ifb.inter.VO.IfbEcdsCdtLog;
+import com.ruimin.ifb.inter.comm.head.LNRetArray;
+import com.ruimin.ifb.inter.common.services.CommInterfaceService;
+import com.ruimin.ifb.inter.component.base.BaseSwitchComponent;
+import com.ruimin.ifb.inter.inBean.ebank.NDS0370000Req;
+import com.ruimin.ifb.inter.inBean.ebank.NDS0370000Request;
+import com.ruimin.ifb.inter.outBean.ebank.NDS0370000Rsp;
+import com.ruimin.ifb.inter.outBean.ebank.NDS0370000Rsponse;
+import com.ruimin.ifb.po.IfbCustInf;
+import com.ruimin.ifb.po.IfbEcdsDrftInf;
+import com.ruimin.ifb.po.IfbEcdsMstLog;
+import com.ruimin.ifb.util.IfbCommonFunction;
+import com.ruimin.ifb.webservices.process.bean.DrftCreditBody;
+import com.ruimin.ifs.core.exception.SnowException;
+import com.ruimin.ifs.core.exception.SnowExceptionUtil;
+import com.ruimin.ifs.core.util.ContextUtil;
+import com.ruimin.ifs.core.util.DateUtil;
+import com.ruimin.ifs.dao.DBDao;
+import com.ruimin.ifs.dao.DBDaos;
+import com.ruimin.ifs.gov.util.StringUtils;
+import com.ruimin.ifs.rql.cnd.Cnd;
+
+/**
+ * 支付信用查询
+ * company: ShangHai Rmitec CO.,LTD.
+ * file name：NDS0370000Component.java
+ * description：
+ * create date: 2018年2月18日
+ * author: zyl
+ * JDK version: <1.6.0> 
+ * project : iFinBMS <1.0> <br>
+ * modified history  <br>
+ *  date           | author  | desc <br>
+ */
+public class NDS0370000Component extends BaseSwitchComponent {
+	@Override
+	public Object process(Object object) throws SnowException {
+		logger.info("************** 开始 [ NDS0370000(支付信用查询) ] 处理 begin "+System.currentTimeMillis()+" ***********");
+		NDS0370000Req inBean = (NDS0370000Req) object;
+		// 数据组装
+		NDS0370000Rsp outBean = this.dataAssemble(inBean);
+        // 处理报文头
+     	CommInterfaceService.getInstance().setServerLNHeadBeanBySuccess(inBean, outBean);
+     	logger.info("************** 结束 [ NDS0370000(支付信用查询) ] 处理 end "+System.currentTimeMillis()+" *************");
+		return outBean;
+	}
+	
+	/**
+	 * 数据组装
+	 * description：
+	 * @param obj
+	 * @return
+	 * @date 2017年12月25日
+	 * @author zhangyanlong
+	 * @throws SnowException 
+	 */
+	private NDS0370000Rsp dataAssemble(NDS0370000Req inBean) throws SnowException{
+		NDS0370000Rsp outBean = new NDS0370000Rsp();
+		NDS0370000Rsponse rsponse = new NDS0370000Rsponse();
+		
+		
+		DBDao dao = DBDaos.newInstance();
+		String idNb =inBean.getNDS0370000Request().getDrftNb();
+		String[] sb = { "clkNb,操作员编号","drftNb,电子票据号码","acct,帐号","qryCmonID,组织机构代码","sndAtterTyp,发起人类别","ESgnt,电子签名" };
+		String s = checkNull(inBean.getNDS0370000Request(), sb);// 校验是否" "，null
+		
+		
+//		String retStatus = null;
+		LNRetArray lnRetArray = new LNRetArray();
+		// 未通过校验
+		if (StringUtils.isNotBlank(s)) {
+			ebankNullError(lnRetArray, s);
+			SnowExceptionUtil.throwErrorException(lnRetArray.getRET_CODE(),new String[]{lnRetArray.getRET_MSG()});
+		} else {
+		//通过非空校验
+			List<IfbEcdsMstLog> msgList = dao.selectAll(IfbEcdsMstLog.class,Cnd.where("idNb", "=",idNb).and("txnCd","=",ECDSTxnCode.S037));
+			if(msgList.size() > 0){
+				SnowExceptionUtil.throwErrorException("IT_E038");///该票据已发起过查验,无法重复发送
+			}else{
+				//发送人行
+				EcdsCallRetBean retBean  =	CommEbankDrftReqService.getInstance().sendMsg037(this.getEcdsDrf(inBean.getNDS0370000Request()));
+		
+				rsponse.setOrigMsgID(retBean.getMsgId());	
+
+				//保存请求信息
+				this.setCdtLog(inBean.getNDS0370000Request());	
+				}
+			}
+		outBean.setNDS0370000Rsponse(rsponse);
+		return outBean;
+		}
+	
+	
+	
+
+	
+	
+	
+	
+	/**
+	 * 组装发送人行bean
+	 * @return
+	 * @throws SnowException 
+	 */
+	private DrftCreditBody getEcdsDrf(NDS0370000Request  nds037req ) throws SnowException {
+		DBDao dao = DBDaos.newInstance();
+		DrftCreditBody creditBody = new DrftCreditBody();
+		IfbEcdsDrftInf ecdsDrftInf =new IfbEcdsDrftInf();
+		List<IfbEcdsDrftInf> infLists = dao.selectAll(IfbEcdsDrftInf.class,Cnd.where("idNb", "=", nds037req.getDrftNb()));
+		if(!infLists.isEmpty()){
+			ecdsDrftInf=infLists.get(0);
+			/*msg037.setDrftIsseAmt(drftShowDrftBody.getIsseAmt());	// 票据金额
+			msg037.setQrierElctrncSgntr(drftShowDrftBody.getElctrncSgntr());
+			info.setRole(drftShowDrftBody.getCustTyp());	// 类别
+			info.setNm(drftShowDrftBody.getCustNm());	// 名称
+			info.setCmonId(drftShowDrftBody.getOrgCd());	// 组织机构代码
+			info.setAcctId(drftShowDrftBody.getAcctId());	// 帐号
+			info.setAcctSvcr(drftShowDrftBody.getAcctSvcr());	// 行号
+*/			
+			
+			creditBody.setDrftNo(nds037req.getDrftNb());
+			 creditBody.setIsseAmt(ecdsDrftInf.getIsseAmt());
+			 creditBody.setElctrncSgntr(nds037req.getESgnt());
+			 creditBody.setCustTyp(nds037req.getSndAtterTyp());
+			 creditBody.setOrgCd(nds037req.getQryCmonID());
+			 creditBody.setAcctId(nds037req.getAcct());
+			 creditBody.setAcctSvcr(nds037req.getAcctSvcr());	
+		}
+		return creditBody;
+	}
+	
+	/**
+	 * 保存查询信息
+	 * @return
+	 * @throws SnowException 
+	 */
+	private void setCdtLog(NDS0370000Request  nds037req ) throws SnowException {
+		
+		IfbEcdsDrftInf ecdsDrftInf = new IfbEcdsDrftInf();
+		DBDao dao = DBDaos.newInstance();
+		 IfbEcdsCdtLog catLog =new  IfbEcdsCdtLog();
+		IfbCommonFunction.copyProperties(catLog, nds037req);
+		catLog.setQryCmonId(nds037req.getQryCmonID());
+		catLog.setAtterTyp(nds037req.getSndAtterTyp());
+		List<IfbEcdsDrftInf> infLists = dao.selectAll(IfbEcdsDrftInf.class,Cnd.where("idNb", "=", nds037req.getDrftNb()));
+		if(!infLists.isEmpty()){
+			ecdsDrftInf= infLists.get(0);
+	    catLog.setIsseAmt(ecdsDrftInf.getIsseAmt()); 
+	    catLog.setDueDt(ecdsDrftInf.getDueDt());
+	    catLog.setIsseDt(ecdsDrftInf.getIsseDt());
+		catLog.setAcctSvcr(ecdsDrftInf.getAccptrAcctSvcr());
+		catLog.setDrftTyp(ecdsDrftInf.getDrftTyp());
+		}
+		List<IfbCustInf> custInfs = dao.selectAll(IfbCustInf.class, Cnd.where("orgCd", "=", nds037req.getQryCmonID()));
+		if(!custInfs.isEmpty()){
+			catLog.setQryNm(custInfs.get(0).getCustNm()); 
+		}
+		String date=DateUtil.get14Date();
+		catLog.setOperTm(date);
+		catLog.setId(ContextUtil.getUUID());
+	
+		List<IfbEcdsMstLog> msgList = dao.selectAll(IfbEcdsMstLog.class,Cnd.where("idNb", "=", nds037req.getDrftNb()).and("txnCd","=",ECDSTxnCode.S037));
+		if(msgList.size() > 0){
+		catLog.setMsgId(msgList.get(0).getMsgId());   //报文号
+		}
+		dao.insert(catLog);
+	}
+}
